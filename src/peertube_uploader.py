@@ -1,7 +1,11 @@
 import requests
+import urllib3
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+
+# Disable SSL warnings when SSL verification is disabled
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 @dataclass
