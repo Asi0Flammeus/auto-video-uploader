@@ -12,6 +12,9 @@ from rich.table import Table
 from rich.prompt import Prompt
 
 from src.metadata_extractor import MetadataExtractor, VideoMetadata
+from src.youtube_uploader import YouTubeUploader
+from src.peertube_uploader import PeerTubeUploader
+from src.upload_orchestrator import UploadOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -47,6 +50,47 @@ def display_metadata_table(metadata_list: List[VideoMetadata]):
         console.print(f"  [blue]Course:[/blue] {metadata.course_index} - {metadata.course_title}")
         console.print(f"  [magenta]Chapter:[/magenta] Part {metadata.part_index}, Chapter {metadata.chapter_index} - {metadata.chapter_title}")
         console.print(f"  [red]Language:[/red] {metadata.code_language}")
+
+
+def display_upload_results(results):
+    """Display upload results in a formatted table"""
+    table = Table(title="Upload Results")
+
+    table.add_column("Filename", style="cyan", no_wrap=False)
+    table.add_column("YouTube", style="green")
+    table.add_column("PeerTube", style="blue")
+
+    for result in results:
+        youtube_status = "✅" if result.youtube_success else "❌"
+        peertube_status = "✅" if result.peertube_success else "❌"
+
+        table.add_row(
+            result.filename,
+            youtube_status,
+            peertube_status
+        )
+
+    console.print(table)
+
+    # Display URLs for successful uploads
+    console.print("\n[bold]Uploaded Videos:[/bold]")
+    for result in results:
+        if result.youtube_success or result.peertube_success:
+            console.print(f"\n[cyan]{result.filename}[/cyan]")
+            if result.youtube_success:
+                console.print(f"  [green]YouTube:[/green] {result.youtube_url}")
+            if result.peertube_success:
+                console.print(f"  [blue]PeerTube:[/blue] {result.peertube_url}")
+
+    # Display errors
+    errors = [r for r in results if not r.youtube_success or not r.peertube_success]
+    if errors:
+        console.print("\n[bold red]Errors:[/bold red]")
+        for result in errors:
+            if not result.youtube_success:
+                console.print(f"  YouTube - {result.filename}: {result.youtube_error}")
+            if not result.peertube_success:
+                console.print(f"  PeerTube - {result.filename}: {result.peertube_error}")
 
 
 def get_subfolders(base_path: Path) -> List[str]:
@@ -158,6 +202,87 @@ def main(bec_repo: str, input_dir: str):
                 json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
 
             console.print(f"[green]✅ Metadata saved to: {output_file}[/green]")
+
+        # Ask if user wants to upload videos
+        console.print("\n")
+        upload_videos = Prompt.ask(
+            "Do you want to upload these videos now?",
+            choices=["y", "n"],
+            default="n"
+        )
+
+        if upload_videos.lower() == 'y':
+            # Initialize uploaders
+            youtube_uploader = None
+            peertube_uploader = None
+
+            # Check YouTube credentials
+            youtube_client_secrets = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE')
+            if youtube_client_secrets and Path(youtube_client_secrets).exists():
+                youtube_uploader = YouTubeUploader(youtube_client_secrets)
+            else:
+                console.print("[yellow]YouTube credentials not configured. Skipping YouTube upload.[/yellow]")
+
+            # Check PeerTube credentials
+            peertube_instance = os.getenv('PEERTUBE_INSTANCE')
+            peertube_username = os.getenv('PEERTUBE_USERNAME')
+            peertube_password = os.getenv('PEERTUBE_PASSWORD')
+            peertube_upload_endpoint = os.getenv('PEERTUBE_UPLOAD_ENDPOINT')
+            peertube_verify_ssl = os.getenv('PEERTUBE_VERIFY_SSL', 'true').lower() == 'true'
+
+            if peertube_instance and peertube_username and peertube_password:
+                peertube_uploader = PeerTubeUploader(
+                    instance_url=peertube_instance,
+                    username=peertube_username,
+                    password=peertube_password,
+                    upload_endpoint=peertube_upload_endpoint,
+                    verify_ssl=peertube_verify_ssl
+                )
+            else:
+                console.print("[yellow]PeerTube credentials not configured. Skipping PeerTube upload.[/yellow]")
+
+            if not youtube_uploader and not peertube_uploader:
+                console.print("[red]No platform credentials configured. Cannot upload.[/red]")
+                console.print("Please configure credentials in .env file.")
+                sys.exit(1)
+
+            # Create orchestrator
+            orchestrator = UploadOrchestrator(
+                youtube_uploader=youtube_uploader,
+                peertube_uploader=peertube_uploader
+            )
+
+            # Authenticate with platforms
+            console.print("\n[bold]Authenticating with platforms...[/bold]")
+            auth_status = orchestrator.authenticate_platforms()
+
+            if not any(auth_status.values()):
+                console.print("[red]Failed to authenticate with any platform.[/red]")
+                sys.exit(1)
+
+            # Upload videos
+            console.print(f"\n[bold]Uploading {len(metadata_list)} videos...[/bold]")
+            results = orchestrator.upload_batch(
+                video_folder=selected_path,
+                metadata_list=metadata_list,
+                upload_to_youtube=youtube_uploader is not None,
+                upload_to_peertube=peertube_uploader is not None
+            )
+
+            # Display results
+            console.print(f"\n")
+            display_upload_results(results)
+
+            # Summary
+            youtube_success = sum(1 for r in results if r.youtube_success)
+            peertube_success = sum(1 for r in results if r.peertube_success)
+
+            console.print(f"\n[bold]Upload Summary:[/bold]")
+            if youtube_uploader:
+                console.print(f"  YouTube: {youtube_success}/{len(results)} successful")
+            if peertube_uploader:
+                console.print(f"  PeerTube: {peertube_success}/{len(results)} successful")
+
     else:
         console.print("[yellow]No videos were processed successfully.[/yellow]")
 

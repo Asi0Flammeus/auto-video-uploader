@@ -160,7 +160,35 @@ class MetadataExtractor:
         if course_display.startswith('BTC') and len(course_display) > 3:
             course_display = f"{course_display[:3]} {course_display[3:]}"
 
-        return f"{course_display} -- {course_title}"
+        base_description = f"{course_display} -- {course_title}"
+
+        footer = """
+—
+Plan ₿ Network  — Scaling Bitcoin Adoption
+
+Level up your Bitcoin knowledge and Explore all our free, open‑source courses on the platform:
+https://planb.network
+
+Follow us on social:
+Twitter: @planb_network
+
+⚠️ Disclaimer & Risk Warning
+
+Cryptocurrencies are risky. All content is for educational and informational purposes only and does not constitute financial advice. Consult a licensed financial adviser before making any significant financial decisions. Bitcoin is highly volatile and speculative; investing can lead to losses. Never invest more than you can afford to lose. Past performance is not indicative of future results.
+
+The crypto industry contains scams—verify sources and do your own research. Do not trust anyone blindly, including us. We do not partner with any altcoin projects. Our content is free and open source under the CC BY-SA license. We are independent and have no obligations or contracts with any cryptocurrency or ICO.
+
+We will never ask for your private information (seed phrase, private keys, name, address, KYC). We are not responsible for losses due to scams, key mismanagement, or poor investments.
+
+More info:
+
+💻 https://planb.network/about
+
+📬 contact@planb.network
+
+—"""
+
+        return f"{base_description}\n{footer}"
 
     def extract_metadata(self, video_filename: str) -> VideoMetadata:
         """

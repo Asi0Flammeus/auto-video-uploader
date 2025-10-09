@@ -33,3 +33,5 @@ logs/
 .DS_Store
 Thumbs.db
 CLAUDE.md
+google-auth.json
+youtube_credentials.pickle
