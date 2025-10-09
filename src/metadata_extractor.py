@@ -16,6 +16,8 @@ class VideoMetadata:
     description: str
     chapter_title: str
     course_title: str
+    youtube_id: Optional[str] = None
+    peertube_id: Optional[str] = None
 
 
 class MetadataExtractor:
@@ -155,14 +157,22 @@ class MetadataExtractor:
         """
         Generate video description following the template:
         {course index upper case with space} -- {course title in code_language}
+
+        Note: This returns ONLY the base description without footer.
+        Footer should be appended during upload.
         """
         course_display = course_index.upper()
         if course_display.startswith('BTC') and len(course_display) > 3:
             course_display = f"{course_display[:3]} {course_display[3:]}"
 
-        base_description = f"{course_display} -- {course_title}"
+        return f"{course_display} -- {course_title}"
 
-        footer = """
+    @staticmethod
+    def get_description_footer() -> str:
+        """
+        Get the standard footer to be appended to video descriptions during upload
+        """
+        return """
 —
 Plan ₿ Network  — Scaling Bitcoin Adoption
 
@@ -187,8 +197,6 @@ More info:
 📬 contact@planb.network
 
 —"""
-
-        return f"{base_description}\n{footer}"
 
     def extract_metadata(self, video_filename: str) -> VideoMetadata:
         """

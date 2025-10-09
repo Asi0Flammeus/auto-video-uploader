@@ -12,7 +12,7 @@ from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
 
-SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 
 
 @dataclass
@@ -60,6 +60,31 @@ class YouTubeUploader:
 
         self.youtube = build('youtube', 'v3', credentials=creds)
         return True
+
+    def delete_video(self, video_id: str) -> bool:
+        """
+        Delete a video from YouTube
+
+        Args:
+            video_id: YouTube video ID to delete
+
+        Returns:
+            True if deletion successful, False otherwise
+        """
+        if not self.youtube:
+            print("  Not authenticated. Call authenticate() first.")
+            return False
+
+        try:
+            self.youtube.videos().delete(id=video_id).execute()
+            print(f"  ✅ YouTube: Deleted video {video_id}")
+            return True
+        except HttpError as e:
+            print(f"  ❌ YouTube: Failed to delete video {video_id}: {e}")
+            return False
+        except Exception as e:
+            print(f"  ❌ YouTube: Failed to delete video {video_id}: {str(e)}")
+            return False
 
     def upload_video(self, video_path: Path, title: str, description: str,
                      category_id: str = "27", privacy_status: str = "unlisted") -> YouTubeUploadResult:

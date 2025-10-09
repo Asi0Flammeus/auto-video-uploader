@@ -15,6 +15,7 @@ from src.metadata_extractor import MetadataExtractor, VideoMetadata
 from src.youtube_uploader import YouTubeUploader
 from src.peertube_uploader import PeerTubeUploader
 from src.upload_orchestrator import UploadOrchestrator
+from src.metadata_manager import MetadataManager
 
 # Load environment variables
 load_dotenv()
@@ -166,42 +167,30 @@ def main(bec_repo: str, input_dir: str):
         console.print(f"[red]Error initializing metadata extractor: {e}[/red]")
         sys.exit(1)
 
+    # Load existing metadata from metadata.json
+    metadata_manager = MetadataManager()
+    existing_metadata = metadata_manager.load()
+
     # Process videos in selected folder
     metadata_list = extractor.process_videos_in_folder(selected_path)
+
+    # Merge with existing metadata (preserve video IDs if they exist)
+    for metadata in metadata_list:
+        existing = existing_metadata.get(metadata.filename)
+        if existing:
+            metadata.youtube_id = existing.youtube_id
+            metadata.peertube_id = existing.peertube_id
 
     if metadata_list:
         console.print(f"\n[green]✅ Successfully processed {len(metadata_list)} videos[/green]\n")
         display_metadata_table(metadata_list)
 
-        # Ask if user wants to save metadata
-        save_metadata = Prompt.ask(
-            "\nDo you want to save metadata to a JSON file?",
-            choices=["y", "n"],
-            default="y"
-        )
+        # Always save metadata (serves as memory)
+        for metadata in metadata_list:
+            metadata_manager.update_metadata(metadata)
 
-        if save_metadata.lower() == 'y':
-            import json
-
-            output_file = selected_path / "metadata.json"
-            metadata_dict = []
-            for metadata in metadata_list:
-                metadata_dict.append({
-                    'filename': metadata.filename,
-                    'course_index': metadata.course_index,
-                    'part_index': metadata.part_index,
-                    'chapter_index': metadata.chapter_index,
-                    'code_language': metadata.code_language,
-                    'title': metadata.title,
-                    'description': metadata.description,
-                    'chapter_title': metadata.chapter_title,
-                    'course_title': metadata.course_title
-                })
-
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
-
-            console.print(f"[green]✅ Metadata saved to: {output_file}[/green]")
+        metadata_manager.save(list(metadata_manager.metadata_dict.values()))
+        console.print(f"[green]✅ Metadata saved to: {metadata_manager.metadata_file}[/green]")
 
         # Ask if user wants to upload videos
         console.print("\n")
@@ -212,6 +201,48 @@ def main(bec_repo: str, input_dir: str):
         )
 
         if upload_videos.lower() == 'y':
+            # Check for existing uploads and ask user about re-uploading
+            existing_uploads = [m for m in metadata_list if m.youtube_id or m.peertube_id]
+            replace_decisions = {}
+
+            if existing_uploads:
+                console.print(f"\n[yellow]⚠️  Found {len(existing_uploads)} videos already uploaded:[/yellow]")
+                for m in existing_uploads:
+                    platforms = []
+                    if m.youtube_id:
+                        platforms.append(f"YouTube ({m.youtube_id})")
+                    if m.peertube_id:
+                        platforms.append(f"PeerTube ({m.peertube_id})")
+                    console.print(f"  • {m.filename} - {', '.join(platforms)}")
+
+                console.print("\n")
+                reupload_choice = Prompt.ask(
+                    "How do you want to handle existing uploads?",
+                    choices=["skip", "ask", "replace-all"],
+                    default="ask"
+                )
+
+                if reupload_choice == "skip":
+                    # Skip all existing uploads
+                    for m in existing_uploads:
+                        replace_decisions[m.filename] = False
+                elif reupload_choice == "replace-all":
+                    # Replace all existing uploads
+                    for m in existing_uploads:
+                        replace_decisions[m.filename] = True
+                elif reupload_choice == "ask":
+                    # Ask for each video
+                    console.print("\n[bold]Re-upload decisions:[/bold]")
+                    for m in existing_uploads:
+                        console.print(f"\n[cyan]{m.filename}[/cyan]")
+                        console.print(f"  Current: YouTube={m.youtube_id or 'None'}, PeerTube={m.peertube_id or 'None'}")
+                        decision = Prompt.ask(
+                            "  Re-upload this video? (Old will be deleted)",
+                            choices=["y", "n"],
+                            default="n"
+                        )
+                        replace_decisions[m.filename] = (decision.lower() == 'y')
+
             # Initialize uploaders
             youtube_uploader = None
             peertube_uploader = None
@@ -266,7 +297,8 @@ def main(bec_repo: str, input_dir: str):
                 video_folder=selected_path,
                 metadata_list=metadata_list,
                 upload_to_youtube=youtube_uploader is not None,
-                upload_to_peertube=peertube_uploader is not None
+                upload_to_peertube=peertube_uploader is not None,
+                replace_decisions=replace_decisions
             )
 
             # Display results
@@ -282,6 +314,13 @@ def main(bec_repo: str, input_dir: str):
                 console.print(f"  YouTube: {youtube_success}/{len(results)} successful")
             if peertube_uploader:
                 console.print(f"  PeerTube: {peertube_success}/{len(results)} successful")
+
+            # Update metadata.json with video IDs
+            for metadata in metadata_list:
+                metadata_manager.update_metadata(metadata)
+
+            metadata_manager.save(list(metadata_manager.metadata_dict.values()))
+            console.print(f"[green]✅ Metadata with video IDs saved to: {metadata_manager.metadata_file}[/green]")
 
     else:
         console.print("[yellow]No videos were processed successfully.[/yellow]")

@@ -74,6 +74,41 @@ class PeerTubeUploader:
             print(f"PeerTube authentication error: {str(e)}")
             return False
 
+    def delete_video(self, video_id: str) -> bool:
+        """
+        Delete a video from PeerTube
+
+        Args:
+            video_id: PeerTube video ID (UUID or shortUUID) to delete
+
+        Returns:
+            True if deletion successful, False otherwise
+        """
+        if not self.access_token:
+            print("  Not authenticated. Call authenticate() first.")
+            return False
+
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+
+            response = requests.delete(
+                f"{self.instance_url}/api/v1/videos/{video_id}",
+                headers=headers
+            )
+
+            if response.status_code == 204:
+                print(f"  ✅ PeerTube: Deleted video {video_id}")
+                return True
+            else:
+                print(f"  ❌ PeerTube: Failed to delete video {video_id}: {response.status_code} - {response.text}")
+                return False
+
+        except Exception as e:
+            print(f"  ❌ PeerTube: Failed to delete video {video_id}: {str(e)}")
+            return False
+
     def upload_video(self, video_path: Path, title: str, description: str,
                      channel_id: Optional[int] = None,
                      privacy: int = 2,  # 1=Public, 2=Unlisted, 3=Private
@@ -174,15 +209,16 @@ class PeerTubeUploader:
                 )
 
             video_data = response.json()
-            video_id = video_data['video']['id']
             video_uuid = video_data['video']['uuid']
-            video_url = f"{self.instance_url}/w/{video_uuid}"
+            # Try to get shortUUID if available, otherwise use full UUID
+            video_short_uuid = video_data['video'].get('shortUUID', video_uuid)
+            video_url = f"{self.instance_url}/w/{video_short_uuid}"
 
             print(f"  PeerTube upload: Complete")
 
             return PeerTubeUploadResult(
                 success=True,
-                video_id=str(video_id),
+                video_id=video_short_uuid,
                 video_url=video_url
             )
 

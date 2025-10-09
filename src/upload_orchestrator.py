@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from dataclasses import dataclass
 
-from src.metadata_extractor import VideoMetadata
+from src.metadata_extractor import VideoMetadata, MetadataExtractor
 from src.youtube_uploader import YouTubeUploader, YouTubeUploadResult
 from src.peertube_uploader import PeerTubeUploader, PeerTubeUploadResult
 
@@ -33,9 +33,29 @@ class UploadOrchestrator:
         self.youtube_uploader = youtube_uploader
         self.peertube_uploader = peertube_uploader
 
+    def delete_existing_videos(self, metadata: VideoMetadata,
+                               delete_youtube: bool = True,
+                               delete_peertube: bool = True):
+        """
+        Delete existing videos from platforms
+
+        Args:
+            metadata: VideoMetadata with existing video IDs
+            delete_youtube: Whether to delete from YouTube
+            delete_peertube: Whether to delete from PeerTube
+        """
+        if delete_youtube and metadata.youtube_id and self.youtube_uploader:
+            print(f"  Deleting existing YouTube video...")
+            self.youtube_uploader.delete_video(metadata.youtube_id)
+
+        if delete_peertube and metadata.peertube_id and self.peertube_uploader:
+            print(f"  Deleting existing PeerTube video...")
+            self.peertube_uploader.delete_video(metadata.peertube_id)
+
     def upload_video(self, video_path: Path, metadata: VideoMetadata,
                      upload_to_youtube: bool = True,
-                     upload_to_peertube: bool = True) -> UploadResult:
+                     upload_to_peertube: bool = True,
+                     replace_existing: bool = False) -> UploadResult:
         """
         Upload a single video to configured platforms
 
@@ -44,6 +64,7 @@ class UploadOrchestrator:
             metadata: Video metadata
             upload_to_youtube: Whether to upload to YouTube
             upload_to_peertube: Whether to upload to PeerTube
+            replace_existing: If True, delete existing videos before uploading
 
         Returns:
             UploadResult with status for each platform
@@ -55,13 +76,28 @@ class UploadOrchestrator:
             peertube_success=False
         )
 
+        # If replacing, delete existing videos first
+        if replace_existing:
+            self.delete_existing_videos(
+                metadata,
+                delete_youtube=upload_to_youtube,
+                delete_peertube=upload_to_peertube
+            )
+            # Clear the IDs since we deleted them
+            metadata.youtube_id = None
+            metadata.peertube_id = None
+
+        # Append footer to description for upload
+        footer = MetadataExtractor.get_description_footer()
+        full_description = f"{metadata.description}{footer}"
+
         # Upload to YouTube
         if upload_to_youtube and self.youtube_uploader:
             print(f"  Uploading to YouTube...")
             yt_result = self.youtube_uploader.upload_video(
                 video_path=video_path,
                 title=metadata.title,
-                description=metadata.description,
+                description=full_description,
                 privacy_status="unlisted"
             )
 
@@ -71,6 +107,8 @@ class UploadOrchestrator:
 
             if yt_result.success:
                 print(f"  ✅ YouTube: {yt_result.video_url}")
+                # Update metadata with YouTube ID
+                metadata.youtube_id = yt_result.video_id
             else:
                 print(f"  ❌ YouTube: {yt_result.error}")
 
@@ -80,7 +118,7 @@ class UploadOrchestrator:
             pt_result = self.peertube_uploader.upload_video(
                 video_path=video_path,
                 title=metadata.title,
-                description=metadata.description,
+                description=full_description,
                 privacy=2  # Unlisted
             )
 
@@ -90,6 +128,8 @@ class UploadOrchestrator:
 
             if pt_result.success:
                 print(f"  ✅ PeerTube: {pt_result.video_url}")
+                # Update metadata with PeerTube ID
+                metadata.peertube_id = pt_result.video_id
             else:
                 print(f"  ❌ PeerTube: {pt_result.error}")
 
@@ -97,7 +137,9 @@ class UploadOrchestrator:
 
     def upload_batch(self, video_folder: Path, metadata_list: List[VideoMetadata],
                      upload_to_youtube: bool = True,
-                     upload_to_peertube: bool = True) -> List[UploadResult]:
+                     upload_to_peertube: bool = True,
+                     skip_existing: bool = False,
+                     replace_decisions: Dict[str, bool] = None) -> List[UploadResult]:
         """
         Upload multiple videos from a folder
 
@@ -106,6 +148,8 @@ class UploadOrchestrator:
             metadata_list: List of video metadata
             upload_to_youtube: Whether to upload to YouTube
             upload_to_peertube: Whether to upload to PeerTube
+            skip_existing: If True, skip videos already uploaded
+            replace_decisions: Dict mapping filename to replace decision (True=replace, False=skip)
 
         Returns:
             List of UploadResult for each video
@@ -115,6 +159,33 @@ class UploadOrchestrator:
         for i, metadata in enumerate(metadata_list, 1):
             print(f"\n[{i}/{len(metadata_list)}] Processing: {metadata.filename}")
             print(f"  Title: {metadata.title}")
+
+            # Check if we should skip this video
+            if skip_existing and (metadata.youtube_id or metadata.peertube_id):
+                print(f"  ⏭️  Skipping (already uploaded)")
+                results.append(UploadResult(
+                    filename=metadata.filename,
+                    title=metadata.title,
+                    youtube_success=False,
+                    youtube_error="Skipped - already uploaded",
+                    peertube_success=False,
+                    peertube_error="Skipped - already uploaded"
+                ))
+                continue
+
+            # Check if we should skip based on user decision
+            if replace_decisions and metadata.filename in replace_decisions:
+                if not replace_decisions[metadata.filename]:
+                    print(f"  ⏭️  Skipping (user chose not to re-upload)")
+                    results.append(UploadResult(
+                        filename=metadata.filename,
+                        title=metadata.title,
+                        youtube_success=False,
+                        youtube_error="Skipped by user",
+                        peertube_success=False,
+                        peertube_error="Skipped by user"
+                    ))
+                    continue
 
             video_path = video_folder / metadata.filename
 
@@ -130,11 +201,17 @@ class UploadOrchestrator:
                 ))
                 continue
 
+            # Determine if we should replace existing videos
+            replace_existing = False
+            if replace_decisions and metadata.filename in replace_decisions:
+                replace_existing = replace_decisions[metadata.filename]
+
             result = self.upload_video(
                 video_path=video_path,
                 metadata=metadata,
                 upload_to_youtube=upload_to_youtube,
-                upload_to_peertube=upload_to_peertube
+                upload_to_peertube=upload_to_peertube,
+                replace_existing=replace_existing
             )
 
             results.append(result)
