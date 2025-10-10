@@ -109,6 +109,23 @@ class UploadOrchestrator:
                 print(f"  ✅ YouTube: {yt_result.video_url}")
                 # Update metadata with YouTube ID
                 metadata.youtube_id = yt_result.video_id
+
+                # Add to playlist
+                playlist_title = metadata.description  # Use base description as playlist name
+                print(f"  Checking for playlist: {playlist_title}")
+
+                playlist_id = self.youtube_uploader.get_playlist_by_title(playlist_title)
+
+                if not playlist_id:
+                    print(f"  Creating playlist: {playlist_title}")
+                    playlist_id = self.youtube_uploader.create_playlist(
+                        title=playlist_title,
+                        description=f"Videos for {playlist_title}",
+                        privacy="unlisted"
+                    )
+
+                if playlist_id:
+                    self.youtube_uploader.add_video_to_playlist(playlist_id, yt_result.video_id)
             else:
                 print(f"  ❌ YouTube: {yt_result.error}")
 
@@ -130,6 +147,23 @@ class UploadOrchestrator:
                 print(f"  ✅ PeerTube: {pt_result.video_url}")
                 # Update metadata with PeerTube ID
                 metadata.peertube_id = pt_result.video_id
+
+                # Add to playlist
+                playlist_name = metadata.description  # Use base description as playlist name
+                print(f"  Checking for playlist: {playlist_name}")
+
+                playlist_id = self.peertube_uploader.get_playlist_by_name(playlist_name)
+
+                if not playlist_id:
+                    print(f"  Creating playlist: {playlist_name}")
+                    playlist_id = self.peertube_uploader.create_playlist(
+                        display_name=playlist_name,
+                        description=f"Videos for {playlist_name}",
+                        privacy=2  # Unlisted
+                    )
+
+                if playlist_id:
+                    self.peertube_uploader.add_video_to_playlist(playlist_id, pt_result.video_id)
             else:
                 print(f"  ❌ PeerTube: {pt_result.error}")
 

@@ -61,6 +61,115 @@ class YouTubeUploader:
         self.youtube = build('youtube', 'v3', credentials=creds)
         return True
 
+    def get_playlist_by_title(self, title: str) -> Optional[str]:
+        """
+        Find a playlist by title
+
+        Args:
+            title: Playlist title to search for
+
+        Returns:
+            Playlist ID if found, None otherwise
+        """
+        if not self.youtube:
+            return None
+
+        try:
+            request = self.youtube.playlists().list(
+                part="snippet",
+                mine=True,
+                maxResults=50
+            )
+
+            while request:
+                response = request.execute()
+
+                for playlist in response.get('items', []):
+                    if playlist['snippet']['title'] == title:
+                        return playlist['id']
+
+                request = self.youtube.playlists().list_next(request, response)
+
+            return None
+
+        except Exception as e:
+            print(f"  Warning: Failed to search playlists: {str(e)}")
+            return None
+
+    def create_playlist(self, title: str, description: str = "", privacy: str = "unlisted") -> Optional[str]:
+        """
+        Create a new playlist
+
+        Args:
+            title: Playlist title
+            description: Playlist description
+            privacy: Privacy status (public, unlisted, private)
+
+        Returns:
+            Playlist ID if created successfully, None otherwise
+        """
+        if not self.youtube:
+            return None
+
+        try:
+            request = self.youtube.playlists().insert(
+                part="snippet,status",
+                body={
+                    "snippet": {
+                        "title": title,
+                        "description": description
+                    },
+                    "status": {
+                        "privacyStatus": privacy
+                    }
+                }
+            )
+
+            response = request.execute()
+            playlist_id = response['id']
+            print(f"  ✅ YouTube: Created playlist '{title}' ({playlist_id})")
+            return playlist_id
+
+        except Exception as e:
+            print(f"  ❌ YouTube: Failed to create playlist: {str(e)}")
+            return None
+
+    def add_video_to_playlist(self, playlist_id: str, video_id: str) -> bool:
+        """
+        Add a video to a playlist
+
+        Args:
+            playlist_id: Playlist ID
+            video_id: Video ID to add
+
+        Returns:
+            True if added successfully, False otherwise
+        """
+        if not self.youtube:
+            return False
+
+        try:
+            request = self.youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {
+                            "kind": "youtube#video",
+                            "videoId": video_id
+                        }
+                    }
+                }
+            )
+
+            request.execute()
+            print(f"  ✅ YouTube: Added video to playlist")
+            return True
+
+        except Exception as e:
+            print(f"  ❌ YouTube: Failed to add video to playlist: {str(e)}")
+            return False
+
     def delete_video(self, video_id: str) -> bool:
         """
         Delete a video from YouTube

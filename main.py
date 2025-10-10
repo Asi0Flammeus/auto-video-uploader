@@ -215,33 +215,37 @@ def main(bec_repo: str, input_dir: str):
                         platforms.append(f"PeerTube ({m.peertube_id})")
                     console.print(f"  • {m.filename} - {', '.join(platforms)}")
 
-                console.print("\n")
+                console.print("\n[bold]How do you want to handle existing uploads?[/bold]")
+                console.print("  1. Skip all existing")
+                console.print("  2. Ask for each video")
+                console.print("  3. Replace all (delete old, upload new)")
+
                 reupload_choice = Prompt.ask(
-                    "How do you want to handle existing uploads?",
-                    choices=["skip", "ask", "replace-all"],
-                    default="ask"
+                    "\nChoice",
+                    choices=["1", "2", "3"],
+                    default="2"
                 )
 
-                if reupload_choice == "skip":
+                if reupload_choice == "1":
                     # Skip all existing uploads
                     for m in existing_uploads:
                         replace_decisions[m.filename] = False
-                elif reupload_choice == "replace-all":
+                elif reupload_choice == "3":
                     # Replace all existing uploads
                     for m in existing_uploads:
                         replace_decisions[m.filename] = True
-                elif reupload_choice == "ask":
+                elif reupload_choice == "2":
                     # Ask for each video
                     console.print("\n[bold]Re-upload decisions:[/bold]")
                     for m in existing_uploads:
                         console.print(f"\n[cyan]{m.filename}[/cyan]")
                         console.print(f"  Current: YouTube={m.youtube_id or 'None'}, PeerTube={m.peertube_id or 'None'}")
                         decision = Prompt.ask(
-                            "  Re-upload this video? (Old will be deleted)",
-                            choices=["y", "n"],
-                            default="n"
+                            "  Re-upload this video? (Old will be deleted) [1=yes, 2=no]",
+                            choices=["1", "2"],
+                            default="2"
                         )
-                        replace_decisions[m.filename] = (decision.lower() == 'y')
+                        replace_decisions[m.filename] = (decision == "1")
 
             # Initialize uploaders
             youtube_uploader = None

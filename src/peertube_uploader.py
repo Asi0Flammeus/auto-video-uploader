@@ -78,6 +78,164 @@ class PeerTubeUploader:
             print(f"PeerTube authentication error: {str(e)}")
             return False
 
+    def get_playlist_by_name(self, display_name: str) -> Optional[str]:
+        """
+        Find a playlist by display name
+
+        Args:
+            display_name: Playlist display name to search for
+
+        Returns:
+            Playlist ID if found, None otherwise
+        """
+        if not self.access_token:
+            return None
+
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+
+            # Get account name
+            account_response = requests.get(
+                f"{self.instance_url}/api/v1/accounts/{self.username}",
+                headers=headers
+            )
+
+            if account_response.status_code != 200:
+                return None
+
+            # Get playlists for this account
+            playlists_response = requests.get(
+                f"{self.instance_url}/api/v1/accounts/{self.username}/video-playlists",
+                headers=headers
+            )
+
+            if playlists_response.status_code != 200:
+                return None
+
+            playlists = playlists_response.json().get('data', [])
+            for playlist in playlists:
+                if playlist.get('displayName') == display_name:
+                    return str(playlist.get('id'))
+
+            return None
+
+        except Exception as e:
+            print(f"  Warning: Failed to search playlists: {str(e)}")
+            return None
+
+    def create_playlist(self, display_name: str, description: str = "", privacy: int = 2) -> Optional[str]:
+        """
+        Create a new playlist
+
+        Args:
+            display_name: Playlist display name
+            description: Playlist description
+            privacy: Privacy level (1=public, 2=unlisted, 3=private)
+
+        Returns:
+            Playlist ID if created successfully, None otherwise
+        """
+        if not self.access_token:
+            return None
+
+        try:
+            # Get default channel
+            channel_response = requests.get(
+                f"{self.instance_url}/api/v1/video-channels/{self.username}_channel",
+                headers={'Authorization': f'Bearer {self.access_token}'}
+            )
+
+            if channel_response.status_code != 200:
+                # Fallback: get user's channels
+                channels_response = requests.get(
+                    f"{self.instance_url}/api/v1/accounts/{self.username}/video-channels",
+                    headers={'Authorization': f'Bearer {self.access_token}'}
+                )
+                if channels_response.status_code == 200:
+                    channels = channels_response.json()['data']
+                    if channels:
+                        video_channel_id = channels[0]['id']
+                    else:
+                        return None
+                else:
+                    return None
+            else:
+                video_channel_id = channel_response.json()['id']
+
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            body = {
+                "displayName": display_name,
+                "description": description,
+                "privacy": privacy,
+                "videoChannelId": video_channel_id
+            }
+
+            response = requests.post(
+                f"{self.instance_url}/api/v1/video-playlists",
+                headers=headers,
+                json=body
+            )
+
+            if response.status_code in [200, 201]:
+                playlist_data = response.json()
+                playlist_id = str(playlist_data['videoPlaylist']['id'])
+                print(f"  ✅ PeerTube: Created playlist '{display_name}' ({playlist_id})")
+                return playlist_id
+            else:
+                print(f"  ❌ PeerTube: Failed to create playlist: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"  ❌ PeerTube: Failed to create playlist: {str(e)}")
+            return None
+
+    def add_video_to_playlist(self, playlist_id: str, video_id: str) -> bool:
+        """
+        Add a video to a playlist
+
+        Args:
+            playlist_id: Playlist ID
+            video_id: Video ID (UUID or shortUUID) to add
+
+        Returns:
+            True if added successfully, False otherwise
+        """
+        if not self.access_token:
+            return False
+
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            body = {
+                "videoId": video_id
+            }
+
+            response = requests.post(
+                f"{self.instance_url}/api/v1/video-playlists/{playlist_id}/videos",
+                headers=headers,
+                json=body
+            )
+
+            if response.status_code in [200, 201]:
+                print(f"  ✅ PeerTube: Added video to playlist")
+                return True
+            else:
+                print(f"  ❌ PeerTube: Failed to add video to playlist: {response.status_code} - {response.text}")
+                return False
+
+        except Exception as e:
+            print(f"  ❌ PeerTube: Failed to add video to playlist: {str(e)}")
+            return False
+
     def delete_video(self, video_id: str) -> bool:
         """
         Delete a video from PeerTube
