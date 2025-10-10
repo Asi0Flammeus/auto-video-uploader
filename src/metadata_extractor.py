@@ -18,6 +18,7 @@ class VideoMetadata:
     course_title: str
     youtube_id: Optional[str] = None
     peertube_id: Optional[str] = None
+    sha256_hash: Optional[str] = None
 
 
 class MetadataExtractor:
@@ -27,6 +28,28 @@ class MetadataExtractor:
 
         if not self.courses_dir.exists():
             raise ValueError(f"Courses directory not found at {self.courses_dir}")
+
+    @staticmethod
+    def calculate_file_hash(file_path: Path) -> str:
+        """
+        Calculate SHA256 hash of a video file
+        
+        Args:
+            file_path: Path to the video file
+            
+        Returns:
+            SHA256 hash as hexadecimal string
+        """
+        import hashlib
+        
+        sha256_hash = hashlib.sha256()
+        
+        # Read file in chunks to handle large video files efficiently
+        with open(file_path, 'rb') as f:
+            for byte_block in iter(lambda: f.read(4096 * 1024), b""):  # 4MB chunks
+                sha256_hash.update(byte_block)
+        
+        return sha256_hash.hexdigest()
 
     def parse_filename(self, filename: str) -> Tuple[str, int, int, str]:
         """
@@ -198,9 +221,13 @@ More info:
 
 —"""
 
-    def extract_metadata(self, video_filename: str) -> VideoMetadata:
+    def extract_metadata(self, video_filename: str, video_file_path: Optional[Path] = None) -> VideoMetadata:
         """
         Extract all metadata from a video filename
+        
+        Args:
+            video_filename: Name of the video file
+            video_file_path: Optional full path to calculate SHA256 hash
         """
         try:
             # Parse filename
@@ -216,6 +243,11 @@ More info:
                                                    chapter_index, chapter_title)
             video_description = self.generate_video_description(course_index, course_title)
 
+            # Calculate SHA256 hash if file path provided
+            sha256_hash = None
+            if video_file_path and video_file_path.exists():
+                sha256_hash = self.calculate_file_hash(video_file_path)
+
             return VideoMetadata(
                 filename=video_filename,
                 course_index=course_index,
@@ -225,7 +257,8 @@ More info:
                 title=video_title,
                 description=video_description,
                 chapter_title=chapter_title,
-                course_title=course_title
+                course_title=course_title,
+                sha256_hash=sha256_hash
             )
         except Exception as e:
             raise Exception(f"Error processing {video_filename}: {str(e)}")
@@ -245,9 +278,10 @@ More info:
 
         for video_file in video_files:
             try:
-                metadata = self.extract_metadata(video_file.name)
+                print(f"⏳ Processing: {video_file.name} (calculating hash...)")
+                metadata = self.extract_metadata(video_file.name, video_file)
                 metadata_list.append(metadata)
-                print(f"✓ Processed: {video_file.name}")
+                print(f"✓ Processed: {video_file.name} (hash: {metadata.sha256_hash[:16]}...)")
             except Exception as e:
                 print(f"✗ Error processing {video_file.name}: {e}")
 

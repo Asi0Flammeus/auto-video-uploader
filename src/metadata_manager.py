@@ -43,7 +43,8 @@ class MetadataManager:
                     chapter_title=item['chapter_title'],
                     course_title=item['course_title'],
                     youtube_id=item.get('youtube_id'),
-                    peertube_id=item.get('peertube_id')
+                    peertube_id=item.get('peertube_id'),
+                    sha256_hash=item.get('sha256_hash')
                 )
                 self.metadata_dict[item['filename']] = metadata
 
@@ -73,7 +74,8 @@ class MetadataManager:
                 'chapter_title': metadata.chapter_title,
                 'course_title': metadata.course_title,
                 'youtube_id': metadata.youtube_id,
-                'peertube_id': metadata.peertube_id
+                'peertube_id': metadata.peertube_id,
+                'sha256_hash': metadata.sha256_hash
             })
 
         with open(self.metadata_file, 'w', encoding='utf-8') as f:
@@ -105,6 +107,37 @@ class MetadataManager:
         if not existing:
             return False
 
+        return existing.youtube_id is not None or existing.peertube_id is not None
+
+    def find_by_hash(self, sha256_hash: str) -> Optional[VideoMetadata]:
+        """
+        Find metadata by SHA256 hash
+        
+        Args:
+            sha256_hash: SHA256 hash to search for
+            
+        Returns:
+            VideoMetadata if found, None otherwise
+        """
+        for metadata in self.metadata_dict.values():
+            if metadata.sha256_hash == sha256_hash:
+                return metadata
+        return None
+
+    def is_hash_uploaded(self, sha256_hash: str) -> bool:
+        """
+        Check if a video with this hash has been uploaded to at least one platform
+        
+        Args:
+            sha256_hash: SHA256 hash to check
+            
+        Returns:
+            True if video with this hash has youtube_id or peertube_id
+        """
+        existing = self.find_by_hash(sha256_hash)
+        if not existing:
+            return False
+        
         return existing.youtube_id is not None or existing.peertube_id is not None
 
     def update_metadata(self, metadata: VideoMetadata):

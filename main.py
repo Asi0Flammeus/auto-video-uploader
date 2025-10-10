@@ -51,6 +51,8 @@ def display_metadata_table(metadata_list: List[VideoMetadata]):
         console.print(f"  [blue]Course:[/blue] {metadata.course_index} - {metadata.course_title}")
         console.print(f"  [magenta]Chapter:[/magenta] Part {metadata.part_index}, Chapter {metadata.chapter_index} - {metadata.chapter_title}")
         console.print(f"  [red]Language:[/red] {metadata.code_language}")
+        if metadata.sha256_hash:
+            console.print(f"  [dim]SHA256:[/dim] {metadata.sha256_hash}")
 
 
 def display_upload_results(results):
@@ -174,78 +176,73 @@ def main(bec_repo: str, input_dir: str):
     # Process videos in selected folder
     metadata_list = extractor.process_videos_in_folder(selected_path)
 
-    # Merge with existing metadata (preserve video IDs if they exist)
+    # Check for duplicate hashes and merge with existing metadata
+    hash_duplicates = []
     for metadata in metadata_list:
+        # First check if this hash already exists (different filename, same content)
+        if metadata.sha256_hash:
+            existing_by_hash = metadata_manager.find_by_hash(metadata.sha256_hash)
+            if existing_by_hash and existing_by_hash.filename != metadata.filename:
+                # Found duplicate content with different filename
+                hash_duplicates.append({
+                    'current': metadata,
+                    'existing': existing_by_hash
+                })
+                # Copy upload IDs from the existing video with same hash
+                metadata.youtube_id = existing_by_hash.youtube_id
+                metadata.peertube_id = existing_by_hash.peertube_id
+                continue
+
+        # Merge with existing metadata by filename (preserve video IDs if they exist)
         existing = existing_metadata.get(metadata.filename)
         if existing:
             metadata.youtube_id = existing.youtube_id
             metadata.peertube_id = existing.peertube_id
 
+    # Display hash duplicate warnings
+    if hash_duplicates:
+        console.print(f"\n[yellow]⚠️  Found {len(hash_duplicates)} videos with duplicate content (same hash):[/yellow]")
+        for dup in hash_duplicates:
+            console.print(f"  • {dup['current'].filename} → same as {dup['existing'].filename}")
+            console.print(f"    Hash: {dup['current'].sha256_hash[:16]}...")
+            if dup['existing'].youtube_id or dup['existing'].peertube_id:
+                console.print(f"    [green]Already uploaded, will skip[/green]")
+        console.print("")
+
     if metadata_list:
         console.print(f"\n[green]✅ Successfully processed {len(metadata_list)} videos[/green]\n")
         display_metadata_table(metadata_list)
 
-        # Always save metadata (serves as memory)
+        # Filter videos: only upload those whose hash is NOT in metadata.json with upload IDs
+        videos_to_upload = []
+        already_uploaded = []
+
         for metadata in metadata_list:
-            metadata_manager.update_metadata(metadata)
+            if metadata.sha256_hash and metadata_manager.is_hash_uploaded(metadata.sha256_hash):
+                already_uploaded.append(metadata)
+            else:
+                videos_to_upload.append(metadata)
 
-        metadata_manager.save(list(metadata_manager.metadata_dict.values()))
-        console.print(f"[green]✅ Metadata saved to: {metadata_manager.metadata_file}[/green]")
+        # Save metadata only for new videos (hash not already present)
+        if videos_to_upload:
+            for metadata in videos_to_upload:
+                metadata_manager.update_metadata(metadata)
 
-        # Ask if user wants to upload videos
-        console.print("\n")
-        upload_videos = Prompt.ask(
-            "Do you want to upload these videos now?",
-            choices=["y", "n"],
-            default="n"
-        )
+            metadata_manager.save(list(metadata_manager.metadata_dict.values()))
+            console.print(f"[green]✅ Metadata saved for {len(videos_to_upload)} new videos[/green]")
 
-        if upload_videos.lower() == 'y':
-            # Check for existing uploads and ask user about re-uploading
-            existing_uploads = [m for m in metadata_list if m.youtube_id or m.peertube_id]
-            replace_decisions = {}
+        # Display upload plan
+        if already_uploaded:
+            console.print(f"\n[yellow]⏭️  Skipping {len(already_uploaded)} already uploaded videos (by hash):[/yellow]")
+            for m in already_uploaded:
+                console.print(f"  • {m.filename}")
 
-            if existing_uploads:
-                console.print(f"\n[yellow]⚠️  Found {len(existing_uploads)} videos already uploaded:[/yellow]")
-                for m in existing_uploads:
-                    platforms = []
-                    if m.youtube_id:
-                        platforms.append(f"YouTube ({m.youtube_id})")
-                    if m.peertube_id:
-                        platforms.append(f"PeerTube ({m.peertube_id})")
-                    console.print(f"  • {m.filename} - {', '.join(platforms)}")
-
-                console.print("\n[bold]How do you want to handle existing uploads?[/bold]")
-                console.print("  1. Skip all existing")
-                console.print("  2. Ask for each video")
-                console.print("  3. Replace all (delete old, upload new)")
-
-                reupload_choice = Prompt.ask(
-                    "\nChoice",
-                    choices=["1", "2", "3"],
-                    default="2"
-                )
-
-                if reupload_choice == "1":
-                    # Skip all existing uploads
-                    for m in existing_uploads:
-                        replace_decisions[m.filename] = False
-                elif reupload_choice == "3":
-                    # Replace all existing uploads
-                    for m in existing_uploads:
-                        replace_decisions[m.filename] = True
-                elif reupload_choice == "2":
-                    # Ask for each video
-                    console.print("\n[bold]Re-upload decisions:[/bold]")
-                    for m in existing_uploads:
-                        console.print(f"\n[cyan]{m.filename}[/cyan]")
-                        console.print(f"  Current: YouTube={m.youtube_id or 'None'}, PeerTube={m.peertube_id or 'None'}")
-                        decision = Prompt.ask(
-                            "  Re-upload this video? (Old will be deleted) [1=yes, 2=no]",
-                            choices=["1", "2"],
-                            default="2"
-                        )
-                        replace_decisions[m.filename] = (decision == "1")
+        if not videos_to_upload:
+            console.print("\n[green]✅ All videos already uploaded. Nothing to do.[/green]")
+        else:
+            console.print(f"\n[blue]📤 Will upload {len(videos_to_upload)} new videos:[/blue]")
+            for m in videos_to_upload:
+                console.print(f"  • {m.filename}")
 
             # Initialize uploaders
             youtube_uploader = None
@@ -296,13 +293,13 @@ def main(bec_repo: str, input_dir: str):
                 sys.exit(1)
 
             # Upload videos
-            console.print(f"\n[bold]Uploading {len(metadata_list)} videos...[/bold]")
+            console.print(f"\n[bold]Uploading {len(videos_to_upload)} videos...[/bold]")
             results = orchestrator.upload_batch(
                 video_folder=selected_path,
-                metadata_list=metadata_list,
+                metadata_list=videos_to_upload,
                 upload_to_youtube=youtube_uploader is not None,
                 upload_to_peertube=peertube_uploader is not None,
-                replace_decisions=replace_decisions
+                replace_decisions={}
             )
 
             # Display results
@@ -319,12 +316,12 @@ def main(bec_repo: str, input_dir: str):
             if peertube_uploader:
                 console.print(f"  PeerTube: {peertube_success}/{len(results)} successful")
 
-            # Update metadata.json with video IDs
-            for metadata in metadata_list:
+            # Update metadata.json with video IDs for uploaded videos
+            for metadata in videos_to_upload:
                 metadata_manager.update_metadata(metadata)
 
             metadata_manager.save(list(metadata_manager.metadata_dict.values()))
-            console.print(f"[green]✅ Metadata with video IDs saved to: {metadata_manager.metadata_file}[/green]")
+            console.print(f"[green]✅ Metadata with video IDs updated[/green]")
 
     else:
         console.print("[yellow]No videos were processed successfully.[/yellow]")
