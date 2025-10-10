@@ -156,7 +156,7 @@ class MetadataExtractor:
     def generate_video_description(self, course_index: str, course_title: str) -> str:
         """
         Generate video description following the template:
-        {course index upper case with space} -- {course title in code_language}
+        {course index upper case with space} - {course title in code_language}
 
         Note: This returns ONLY the base description without footer.
         Footer should be appended during upload.
@@ -165,7 +165,7 @@ class MetadataExtractor:
         if course_display.startswith('BTC') and len(course_display) > 3:
             course_display = f"{course_display[:3]} {course_display[3:]}"
 
-        return f"{course_display} -- {course_title}"
+        return f"{course_display} - {course_title}"
 
     @staticmethod
     def get_description_footer() -> str:
