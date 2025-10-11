@@ -16,6 +16,7 @@ class VideoMetadata:
     description: str
     chapter_title: str
     course_title: str
+    video_id: Optional[str] = None  # UUID from :::video id=...::: tag, maps to course.yml
     youtube_id: Optional[str] = None
     peertube_id: Optional[str] = None
     sha256_hash: Optional[str] = None
@@ -105,9 +106,12 @@ class MetadataExtractor:
         return f"Course {course_index.upper()}"
 
     def get_chapter_title(self, course_index: str, part_index: int,
-                         chapter_index: int, code_language: str) -> str:
+                         chapter_index: int, code_language: str) -> Tuple[str, Optional[str]]:
         """
-        Extract chapter title based on part and chapter indices
+        Extract chapter title and video ID based on part and chapter indices
+
+        Returns: (chapter_title, video_id)
+        Note: video_id is extracted from :::video id=UUID::: tag, which maps to course.yml
         """
         md_file = self.courses_dir / course_index / f"{code_language}.md"
 
@@ -158,10 +162,21 @@ class MetadataExtractor:
                         # Remove any markdown formatting
                         chapter_title = chapter_title.replace('**', '').replace('*', '')
                         chapter_title = chapter_title.replace('__', '').replace('_', '')
-                        return chapter_title
+
+                        # Extract video ID from :::video id=UUID::: tag in next few lines
+                        video_id = None
+                        for j in range(i + 1, min(i + 10, len(lines))):
+                            if ':::video id=' in lines[j]:
+                                # Extract UUID from :::video id=UUID:::
+                                video_match = re.search(r':::video id=([^:]+):::', lines[j])
+                                if video_match:
+                                    video_id = video_match.group(1)
+                                break
+
+                        return chapter_title, video_id
 
         # Fallback if chapter not found
-        return f"Chapter {part_index}.{chapter_index}"
+        return f"Chapter {part_index}.{chapter_index}", None
 
     def generate_video_title(self, course_index: str, part_index: int,
                             chapter_index: int, chapter_title: str) -> str:
@@ -235,8 +250,8 @@ More info:
 
             # Get course and chapter titles
             course_title = self.get_course_title(course_index, code_language)
-            chapter_title = self.get_chapter_title(course_index, part_index,
-                                                  chapter_index, code_language)
+            chapter_title, video_id = self.get_chapter_title(course_index, part_index,
+                                                             chapter_index, code_language)
 
             # Generate video title and description
             video_title = self.generate_video_title(course_index, part_index,
@@ -258,6 +273,7 @@ More info:
                 description=video_description,
                 chapter_title=chapter_title,
                 course_title=course_title,
+                video_id=video_id,
                 sha256_hash=sha256_hash
             )
         except Exception as e:

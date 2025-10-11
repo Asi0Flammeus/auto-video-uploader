@@ -42,6 +42,7 @@ class MetadataManager:
                     description=item['description'],
                     chapter_title=item['chapter_title'],
                     course_title=item['course_title'],
+                    video_id=item.get('video_id') or item.get('chapter_uuid'),  # Support old field name
                     youtube_id=item.get('youtube_id'),
                     peertube_id=item.get('peertube_id'),
                     sha256_hash=item.get('sha256_hash')
@@ -73,6 +74,7 @@ class MetadataManager:
                 'description': metadata.description,
                 'chapter_title': metadata.chapter_title,
                 'course_title': metadata.course_title,
+                'video_id': metadata.video_id,
                 'youtube_id': metadata.youtube_id,
                 'peertube_id': metadata.peertube_id,
                 'sha256_hash': metadata.sha256_hash

@@ -16,6 +16,7 @@ from src.youtube_uploader import YouTubeUploader
 from src.peertube_uploader import PeerTubeUploader
 from src.upload_orchestrator import UploadOrchestrator
 from src.metadata_manager import MetadataManager
+from src.course_yml_updater import CourseYmlUpdater
 
 # Load environment variables
 load_dotenv()
@@ -278,10 +279,14 @@ def main(bec_repo: str, input_dir: str):
                 console.print("Please configure credentials in .env file.")
                 sys.exit(1)
 
+            # Initialize CourseYmlUpdater
+            course_yml_updater = CourseYmlUpdater(bec_repo)
+
             # Create orchestrator
             orchestrator = UploadOrchestrator(
                 youtube_uploader=youtube_uploader,
-                peertube_uploader=peertube_uploader
+                peertube_uploader=peertube_uploader,
+                course_yml_updater=course_yml_updater
             )
 
             # Authenticate with platforms

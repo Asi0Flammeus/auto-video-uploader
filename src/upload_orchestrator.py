@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from src.metadata_extractor import VideoMetadata, MetadataExtractor
 from src.youtube_uploader import YouTubeUploader, YouTubeUploadResult
 from src.peertube_uploader import PeerTubeUploader, PeerTubeUploadResult
+from src.course_yml_updater import CourseYmlUpdater
 
 
 @dataclass
@@ -22,16 +23,19 @@ class UploadResult:
 class UploadOrchestrator:
     def __init__(self,
                  youtube_uploader: Optional[YouTubeUploader] = None,
-                 peertube_uploader: Optional[PeerTubeUploader] = None):
+                 peertube_uploader: Optional[PeerTubeUploader] = None,
+                 course_yml_updater: Optional[CourseYmlUpdater] = None):
         """
         Initialize upload orchestrator
 
         Args:
             youtube_uploader: Configured YouTube uploader instance
             peertube_uploader: Configured PeerTube uploader instance
+            course_yml_updater: CourseYmlUpdater instance for updating BEC repo
         """
         self.youtube_uploader = youtube_uploader
         self.peertube_uploader = peertube_uploader
+        self.course_yml_updater = course_yml_updater
 
     def delete_existing_videos(self, metadata: VideoMetadata,
                                delete_youtube: bool = True,
@@ -249,6 +253,11 @@ class UploadOrchestrator:
             )
 
             results.append(result)
+
+            # Update course.yml if upload was successful and updater is configured
+            if self.course_yml_updater and (result.youtube_success or result.peertube_success):
+                print(f"  Updating course.yml...")
+                self.course_yml_updater.update_video_ids(metadata)
 
         return results
 
