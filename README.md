@@ -1,6 +1,8 @@
 # Auto Video Uploader
 
-Automatic video uploader for YouTube and PeerTube platforms with metadata extraction from Bitcoin Education Content repository.
+## Context
+
+This project is designed to batch upload translated videos produced by [Plan B Network](https://planb.network) to the [Bitcoin Education Content repository](https://github.com/PlanB-Network/bitcoin-educational-content). Plan B Network provides Bitcoin education translated into multiple languages, and this tool automates the process of uploading these educational videos to multiple platforms while maintaining proper metadata and organization.
 
 ## Features
 
@@ -91,6 +93,7 @@ python main.py
 ### 4. Review Results
 
 The tool will display:
+
 - ✅ Successful uploads with video URLs
 - ❌ Failed uploads with error messages
 - 📊 Summary statistics for each platform
@@ -137,9 +140,11 @@ auto-video-uploader/
 ## Privacy Settings
 
 All videos are uploaded with **unlisted** privacy by default:
+
 - **YouTube**: Unlisted (only people with the link can view)
 - **PeerTube**: Unlisted (not shown in public listings)
 
 ## License
 
-[Your license here]
+MIT License
+
