@@ -245,25 +245,71 @@ def main(bec_repo: str, input_dir: str):
             for m in videos_to_upload:
                 console.print(f"  • {m.filename}")
 
-            # Initialize uploaders
-            youtube_uploader = None
-            peertube_uploader = None
+            # Check which platforms are configured
+            youtube_configured = False
+            peertube_configured = False
 
             # Check YouTube credentials
             youtube_client_secrets = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE')
             if youtube_client_secrets and Path(youtube_client_secrets).exists():
-                youtube_uploader = YouTubeUploader(youtube_client_secrets)
-            else:
-                console.print("[yellow]YouTube credentials not configured. Skipping YouTube upload.[/yellow]")
+                youtube_configured = True
 
             # Check PeerTube credentials
             peertube_instance = os.getenv('PEERTUBE_INSTANCE')
             peertube_username = os.getenv('PEERTUBE_USERNAME')
             peertube_password = os.getenv('PEERTUBE_PASSWORD')
+            if peertube_instance and peertube_username and peertube_password:
+                peertube_configured = True
+
+            if not youtube_configured and not peertube_configured:
+                console.print("[red]No platform credentials configured. Cannot upload.[/red]")
+                console.print("Please configure credentials in .env file.")
+                sys.exit(1)
+
+            # Ask user which platform(s) to upload to
+            console.print("\n[bold]Select upload platform(s):[/bold]")
+            platform_choices = []
+            choice_map = {}
+            choice_num = 1
+
+            if youtube_configured and peertube_configured:
+                console.print(f"  {choice_num}. Both YouTube and PeerTube")
+                choice_map[str(choice_num)] = "both"
+                platform_choices.append(str(choice_num))
+                choice_num += 1
+
+            if youtube_configured:
+                console.print(f"  {choice_num}. YouTube only")
+                choice_map[str(choice_num)] = "youtube"
+                platform_choices.append(str(choice_num))
+                choice_num += 1
+
+            if peertube_configured:
+                console.print(f"  {choice_num}. PeerTube only")
+                choice_map[str(choice_num)] = "peertube"
+                platform_choices.append(str(choice_num))
+                choice_num += 1
+
+            console.print("")
+            platform_choice = Prompt.ask(
+                "Select platform",
+                choices=platform_choices,
+                default="1"
+            )
+
+            selected_platform = choice_map[platform_choice]
+
+            # Initialize uploaders based on selection
+            youtube_uploader = None
+            peertube_uploader = None
             peertube_upload_endpoint = os.getenv('PEERTUBE_UPLOAD_ENDPOINT')
             peertube_verify_ssl = os.getenv('PEERTUBE_VERIFY_SSL', 'true').lower() == 'true'
 
-            if peertube_instance and peertube_username and peertube_password:
+            if selected_platform in ["both", "youtube"]:
+                youtube_uploader = YouTubeUploader(youtube_client_secrets)
+                console.print("[green]✓ YouTube uploader initialized[/green]")
+
+            if selected_platform in ["both", "peertube"]:
                 peertube_uploader = PeerTubeUploader(
                     instance_url=peertube_instance,
                     username=peertube_username,
@@ -271,13 +317,7 @@ def main(bec_repo: str, input_dir: str):
                     upload_endpoint=peertube_upload_endpoint,
                     verify_ssl=peertube_verify_ssl
                 )
-            else:
-                console.print("[yellow]PeerTube credentials not configured. Skipping PeerTube upload.[/yellow]")
-
-            if not youtube_uploader and not peertube_uploader:
-                console.print("[red]No platform credentials configured. Cannot upload.[/red]")
-                console.print("Please configure credentials in .env file.")
-                sys.exit(1)
+                console.print("[green]✓ PeerTube uploader initialized[/green]")
 
             # Initialize CourseYmlUpdater
             course_yml_updater = CourseYmlUpdater(bec_repo)
