@@ -177,96 +177,60 @@ def main(bec_repo: str, input_dir: str):
     # Process videos in selected folder
     metadata_list = extractor.process_videos_in_folder(selected_path)
 
-    # Check for duplicate hashes and merge with existing metadata
-    hash_duplicates = []
-    for metadata in metadata_list:
-        # First check if this hash already exists (different filename, same content)
-        if metadata.sha256_hash:
-            existing_by_hash = metadata_manager.find_by_hash(metadata.sha256_hash)
-            if existing_by_hash and existing_by_hash.filename != metadata.filename:
-                # Found duplicate content with different filename
-                hash_duplicates.append({
-                    'current': metadata,
-                    'existing': existing_by_hash
-                })
-                # Copy upload IDs from the existing video with same hash
-                metadata.youtube_id = existing_by_hash.youtube_id
-                metadata.peertube_id = existing_by_hash.peertube_id
-                continue
-
-        # Merge with existing metadata by filename (preserve video IDs if they exist)
-        existing = existing_metadata.get(metadata.filename)
-        if existing:
-            metadata.youtube_id = existing.youtube_id
-            metadata.peertube_id = existing.peertube_id
-
-    # Display hash duplicate warnings
-    if hash_duplicates:
-        console.print(f"\n[yellow]⚠️  Found {len(hash_duplicates)} videos with duplicate content (same hash):[/yellow]")
-        for dup in hash_duplicates:
-            console.print(f"  • {dup['current'].filename} → same as {dup['existing'].filename}")
-            console.print(f"    Hash: {dup['current'].sha256_hash[:16]}...")
-            if dup['existing'].youtube_id or dup['existing'].peertube_id:
-                console.print(f"    [green]Already uploaded, will skip[/green]")
-        console.print("")
-
     if metadata_list:
         console.print(f"\n[green]✅ Successfully processed {len(metadata_list)} videos[/green]\n")
         display_metadata_table(metadata_list)
 
-        # Filter videos: only upload those whose hash is NOT in metadata.json with upload IDs
-        videos_to_upload = []
-        already_uploaded = []
+        console.print(f"\n[blue]📤 Processing {len(metadata_list)} videos for upload:[/blue]")
 
-        for metadata in metadata_list:
-            if metadata.sha256_hash and metadata_manager.is_hash_uploaded(metadata.sha256_hash):
-                already_uploaded.append(metadata)
+        # Check which platforms are configured
+        youtube_configured = False
+        peertube_configured = False
+
+        # Check YouTube credentials
+        youtube_client_secrets = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE')
+        if youtube_client_secrets and Path(youtube_client_secrets).exists():
+            youtube_configured = True
+
+        # Check PeerTube credentials
+        peertube_instance = os.getenv('PEERTUBE_INSTANCE')
+        peertube_username = os.getenv('PEERTUBE_USERNAME')
+        peertube_password = os.getenv('PEERTUBE_PASSWORD')
+        if peertube_instance and peertube_username and peertube_password:
+            peertube_configured = True
+
+        if not youtube_configured and not peertube_configured:
+            console.print("[red]No platform credentials configured. Cannot upload.[/red]")
+            console.print("Please configure credentials in .env file.")
+            sys.exit(1)
+
+        # Ask user about provider strategy first
+        provider_strategy = "both"  # default
+        if youtube_configured and peertube_configured:
+            console.print("\n[bold]Select provider strategy:[/bold]")
+            console.print("  1. Consider both YouTube and PeerTube for uploads")
+            console.print("  2. Consider only PeerTube for uploads")
+            console.print("")
+
+            strategy_choice = Prompt.ask(
+                "Select strategy",
+                choices=["1", "2"],
+                default="1"
+            )
+
+            if strategy_choice == "2":
+                provider_strategy = "peertube_only"
+                console.print("[yellow]→ Will only consider PeerTube for uploads (YouTube will be ignored)[/yellow]")
             else:
-                videos_to_upload.append(metadata)
+                provider_strategy = "both"
+                console.print("[green]→ Will consider both providers for uploads[/green]")
 
-        # Save metadata only for new videos (hash not already present)
-        if videos_to_upload:
-            for metadata in videos_to_upload:
-                metadata_manager.update_metadata(metadata)
-
-            metadata_manager.save(list(metadata_manager.metadata_dict.values()))
-            console.print(f"[green]✅ Metadata saved for {len(videos_to_upload)} new videos[/green]")
-
-        # Display upload plan
-        if already_uploaded:
-            console.print(f"\n[yellow]⏭️  Skipping {len(already_uploaded)} already uploaded videos (by hash):[/yellow]")
-            for m in already_uploaded:
-                console.print(f"  • {m.filename}")
-
-        if not videos_to_upload:
-            console.print("\n[green]✅ All videos already uploaded. Nothing to do.[/green]")
+        # Now determine which platforms to actually use based on strategy
+        if provider_strategy == "peertube_only":
+            # Force PeerTube only, even if YouTube is configured
+            selected_platform = "peertube"
         else:
-            console.print(f"\n[blue]📤 Will upload {len(videos_to_upload)} new videos:[/blue]")
-            for m in videos_to_upload:
-                console.print(f"  • {m.filename}")
-
-            # Check which platforms are configured
-            youtube_configured = False
-            peertube_configured = False
-
-            # Check YouTube credentials
-            youtube_client_secrets = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE')
-            if youtube_client_secrets and Path(youtube_client_secrets).exists():
-                youtube_configured = True
-
-            # Check PeerTube credentials
-            peertube_instance = os.getenv('PEERTUBE_INSTANCE')
-            peertube_username = os.getenv('PEERTUBE_USERNAME')
-            peertube_password = os.getenv('PEERTUBE_PASSWORD')
-            if peertube_instance and peertube_username and peertube_password:
-                peertube_configured = True
-
-            if not youtube_configured and not peertube_configured:
-                console.print("[red]No platform credentials configured. Cannot upload.[/red]")
-                console.print("Please configure credentials in .env file.")
-                sys.exit(1)
-
-            # Ask user which platform(s) to upload to
+            # Original logic for platform selection
             console.print("\n[bold]Select upload platform(s):[/bold]")
             platform_choices = []
             choice_map = {}
@@ -299,74 +263,71 @@ def main(bec_repo: str, input_dir: str):
 
             selected_platform = choice_map[platform_choice]
 
-            # Initialize uploaders based on selection
-            youtube_uploader = None
-            peertube_uploader = None
-            peertube_upload_endpoint = os.getenv('PEERTUBE_UPLOAD_ENDPOINT')
-            peertube_verify_ssl = os.getenv('PEERTUBE_VERIFY_SSL', 'true').lower() == 'true'
+        # Initialize uploaders based on selection
+        youtube_uploader = None
+        peertube_uploader = None
+        peertube_upload_endpoint = os.getenv('PEERTUBE_UPLOAD_ENDPOINT')
+        peertube_verify_ssl = os.getenv('PEERTUBE_VERIFY_SSL', 'true').lower() == 'true'
 
-            if selected_platform in ["both", "youtube"]:
-                youtube_uploader = YouTubeUploader(youtube_client_secrets)
-                console.print("[green]✓ YouTube uploader initialized[/green]")
+        if selected_platform in ["both", "youtube"]:
+            youtube_uploader = YouTubeUploader(youtube_client_secrets)
+            console.print("[green]✓ YouTube uploader initialized[/green]")
 
-            if selected_platform in ["both", "peertube"]:
-                peertube_uploader = PeerTubeUploader(
-                    instance_url=peertube_instance,
-                    username=peertube_username,
-                    password=peertube_password,
-                    upload_endpoint=peertube_upload_endpoint,
-                    verify_ssl=peertube_verify_ssl
-                )
-                console.print("[green]✓ PeerTube uploader initialized[/green]")
-
-            # Initialize CourseYmlUpdater
-            course_yml_updater = CourseYmlUpdater(bec_repo)
-
-            # Create orchestrator
-            orchestrator = UploadOrchestrator(
-                youtube_uploader=youtube_uploader,
-                peertube_uploader=peertube_uploader,
-                course_yml_updater=course_yml_updater
+        if selected_platform in ["both", "peertube"]:
+            peertube_uploader = PeerTubeUploader(
+                instance_url=peertube_instance,
+                username=peertube_username,
+                password=peertube_password,
+                upload_endpoint=peertube_upload_endpoint,
+                verify_ssl=peertube_verify_ssl
             )
+            console.print("[green]✓ PeerTube uploader initialized[/green]")
 
-            # Authenticate with platforms
-            console.print("\n[bold]Authenticating with platforms...[/bold]")
-            auth_status = orchestrator.authenticate_platforms()
+        # Initialize CourseYmlUpdater
+        course_yml_updater = CourseYmlUpdater(bec_repo)
 
-            if not any(auth_status.values()):
-                console.print("[red]Failed to authenticate with any platform.[/red]")
-                sys.exit(1)
+        # Create orchestrator
+        orchestrator = UploadOrchestrator(
+            youtube_uploader=youtube_uploader,
+            peertube_uploader=peertube_uploader,
+            course_yml_updater=course_yml_updater
+        )
 
-            # Upload videos
-            console.print(f"\n[bold]Uploading {len(videos_to_upload)} videos...[/bold]")
-            results = orchestrator.upload_batch(
-                video_folder=selected_path,
-                metadata_list=videos_to_upload,
-                upload_to_youtube=youtube_uploader is not None,
-                upload_to_peertube=peertube_uploader is not None,
-                replace_decisions={}
-            )
+        # Authenticate with platforms
+        console.print("\n[bold]Authenticating with platforms...[/bold]")
+        auth_status = orchestrator.authenticate_platforms()
 
-            # Display results
-            console.print(f"\n")
-            display_upload_results(results)
+        if not any(auth_status.values()):
+            console.print("[red]Failed to authenticate with any platform.[/red]")
+            sys.exit(1)
 
-            # Summary
-            youtube_success = sum(1 for r in results if r.youtube_success)
-            peertube_success = sum(1 for r in results if r.peertube_success)
+        # Upload videos with new simplified logic
+        console.print(f"\n[bold]Processing videos for upload...[/bold]")
+        results = orchestrator.upload_batch(
+            video_folder=selected_path,
+            metadata_list=metadata_list,
+            metadata_manager=metadata_manager,
+            upload_to_youtube=youtube_uploader is not None,
+            upload_to_peertube=peertube_uploader is not None,
+            peertube_only_mode=(provider_strategy == "peertube_only")
+        )
 
-            console.print(f"\n[bold]Upload Summary:[/bold]")
-            if youtube_uploader:
-                console.print(f"  YouTube: {youtube_success}/{len(results)} successful")
-            if peertube_uploader:
-                console.print(f"  PeerTube: {peertube_success}/{len(results)} successful")
+        # Display results
+        console.print(f"\n")
+        display_upload_results(results)
 
-            # Update metadata.json with video IDs for uploaded videos
-            for metadata in videos_to_upload:
-                metadata_manager.update_metadata(metadata)
+        # Summary
+        youtube_success = sum(1 for r in results if r.youtube_success)
+        peertube_success = sum(1 for r in results if r.peertube_success)
 
-            metadata_manager.save(list(metadata_manager.metadata_dict.values()))
-            console.print(f"[green]✅ Metadata with video IDs updated[/green]")
+        console.print(f"\n[bold]Upload Summary:[/bold]")
+        if youtube_uploader:
+            console.print(f"  YouTube: {youtube_success}/{len(results)} successful")
+        if peertube_uploader:
+            console.print(f"  PeerTube: {peertube_success}/{len(results)} successful")
+
+        # Note: metadata.json is now updated inside upload_batch after each successful upload
+        console.print(f"[green]✅ Process complete. Metadata is automatically saved.[/green]")
 
     else:
         console.print("[yellow]No videos were processed successfully.[/yellow]")

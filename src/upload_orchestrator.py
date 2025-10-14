@@ -174,20 +174,20 @@ class UploadOrchestrator:
         return result
 
     def upload_batch(self, video_folder: Path, metadata_list: List[VideoMetadata],
+                     metadata_manager,
                      upload_to_youtube: bool = True,
                      upload_to_peertube: bool = True,
-                     skip_existing: bool = False,
-                     replace_decisions: Dict[str, bool] = None) -> List[UploadResult]:
+                     peertube_only_mode: bool = False) -> List[UploadResult]:
         """
-        Upload multiple videos from a folder
+        Upload multiple videos from a folder with automatic replacement detection
 
         Args:
             video_folder: Folder containing video files
-            metadata_list: List of video metadata
+            metadata_list: List of video metadata for new videos
+            metadata_manager: MetadataManager instance for checking existing uploads
             upload_to_youtube: Whether to upload to YouTube
             upload_to_peertube: Whether to upload to PeerTube
-            skip_existing: If True, skip videos already uploaded
-            replace_decisions: Dict mapping filename to replace decision (True=replace, False=skip)
+            peertube_only_mode: If True, only consider PeerTube for all decisions (ignore YouTube entirely)
 
         Returns:
             List of UploadResult for each video
@@ -197,33 +197,6 @@ class UploadOrchestrator:
         for i, metadata in enumerate(metadata_list, 1):
             print(f"\n[{i}/{len(metadata_list)}] Processing: {metadata.filename}")
             print(f"  Title: {metadata.title}")
-
-            # Check if we should skip this video
-            if skip_existing and (metadata.youtube_id or metadata.peertube_id):
-                print(f"  ⏭️  Skipping (already uploaded)")
-                results.append(UploadResult(
-                    filename=metadata.filename,
-                    title=metadata.title,
-                    youtube_success=False,
-                    youtube_error="Skipped - already uploaded",
-                    peertube_success=False,
-                    peertube_error="Skipped - already uploaded"
-                ))
-                continue
-
-            # Check if we should skip based on user decision
-            if replace_decisions and metadata.filename in replace_decisions:
-                if not replace_decisions[metadata.filename]:
-                    print(f"  ⏭️  Skipping (user chose not to re-upload)")
-                    results.append(UploadResult(
-                        filename=metadata.filename,
-                        title=metadata.title,
-                        youtube_success=False,
-                        youtube_error="Skipped by user",
-                        peertube_success=False,
-                        peertube_error="Skipped by user"
-                    ))
-                    continue
 
             video_path = video_folder / metadata.filename
 
@@ -239,25 +212,136 @@ class UploadOrchestrator:
                 ))
                 continue
 
-            # Determine if we should replace existing videos
-            replace_existing = False
-            if replace_decisions and metadata.filename in replace_decisions:
-                replace_existing = replace_decisions[metadata.filename]
-
-            result = self.upload_video(
-                video_path=video_path,
-                metadata=metadata,
-                upload_to_youtube=upload_to_youtube,
-                upload_to_peertube=upload_to_peertube,
-                replace_existing=replace_existing
+            # Priority 1: Check for content replacement (same course+part+chapter but different hash)
+            existing_entry = metadata_manager.find_by_course_part_chapter(
+                metadata.course_index,
+                metadata.part_index,
+                metadata.chapter_index
             )
+
+            if existing_entry and existing_entry.sha256_hash != metadata.sha256_hash:
+                # Found existing video with same course+part+chapter but different content
+                print(f"  🔄 Replacing existing video (content changed)")
+                print(f"    Old: {existing_entry.filename} (hash: {existing_entry.sha256_hash[:16]}...)")
+                print(f"    New: {metadata.filename} (hash: {metadata.sha256_hash[:16]}...)")
+
+                # Copy existing IDs before replacing (so we can delete them)
+                old_youtube_id = existing_entry.youtube_id
+                old_peertube_id = existing_entry.peertube_id
+
+                # Delete old videos from platforms (respect peertube_only_mode)
+                if not peertube_only_mode and old_youtube_id and upload_to_youtube and self.youtube_uploader:
+                    print(f"  Deleting old YouTube video...")
+                    self.youtube_uploader.delete_video(old_youtube_id)
+
+                if old_peertube_id and upload_to_peertube and self.peertube_uploader:
+                    print(f"  Deleting old PeerTube video...")
+                    self.peertube_uploader.delete_video(old_peertube_id)
+
+                # Upload new video to configured platforms
+                result = self.upload_video(
+                    video_path=video_path,
+                    metadata=metadata,
+                    upload_to_youtube=upload_to_youtube and not peertube_only_mode,
+                    upload_to_peertube=upload_to_peertube,
+                    replace_existing=False  # Already deleted manually
+                )
+
+            # Priority 2: Check if hash exists in metadata.json
+            elif metadata.sha256_hash:
+                existing_by_hash = metadata_manager.find_by_hash(metadata.sha256_hash)
+
+                if not existing_by_hash:
+                    # New video (hash not found)
+                    print(f"  📤 New video (hash not found in metadata.json)")
+                    result = self.upload_video(
+                        video_path=video_path,
+                        metadata=metadata,
+                        upload_to_youtube=upload_to_youtube and not peertube_only_mode,
+                        upload_to_peertube=upload_to_peertube,
+                        replace_existing=False
+                    )
+
+                else:
+                    # Priority 3: Hash exists - check which platforms need upload
+                    if peertube_only_mode:
+                        # In PeerTube-only mode, only check PeerTube status
+                        need_youtube = False
+                        need_peertube = upload_to_peertube and not existing_by_hash.peertube_id
+                    else:
+                        # Normal mode: check both platforms
+                        need_youtube = upload_to_youtube and not existing_by_hash.youtube_id
+                        need_peertube = upload_to_peertube and not existing_by_hash.peertube_id
+
+                    if need_youtube or need_peertube:
+                        print(f"  📤 Duplicate content (same hash as {existing_by_hash.filename})")
+
+                        # Copy existing IDs to preserve already uploaded platforms
+                        metadata.youtube_id = existing_by_hash.youtube_id
+                        metadata.peertube_id = existing_by_hash.peertube_id
+
+                        if peertube_only_mode:
+                            print(f"    Uploading to PeerTube only (PeerTube-only mode)")
+                        elif need_youtube and not need_peertube:
+                            print(f"    Uploading to YouTube only (PeerTube already has it)")
+                        elif need_peertube and not need_youtube:
+                            print(f"    Uploading to PeerTube only (YouTube already has it)")
+                        else:
+                            print(f"    Uploading to both platforms")
+
+                        result = self.upload_video(
+                            video_path=video_path,
+                            metadata=metadata,
+                            upload_to_youtube=need_youtube,
+                            upload_to_peertube=need_peertube,
+                            replace_existing=False
+                        )
+                    else:
+                        # Check skip message based on mode
+                        if peertube_only_mode:
+                            skip_msg = "already uploaded to PeerTube"
+                        else:
+                            skip_msg = "already uploaded to both platforms"
+
+                        print(f"  ⏭️  Skipping ({skip_msg})")
+                        print(f"    Same content as: {existing_by_hash.filename}")
+
+                        # Copy existing IDs
+                        metadata.youtube_id = existing_by_hash.youtube_id
+                        metadata.peertube_id = existing_by_hash.peertube_id
+
+                        results.append(UploadResult(
+                            filename=metadata.filename,
+                            title=metadata.title,
+                            youtube_success=False,
+                            youtube_error="Already uploaded" if not peertube_only_mode else "PeerTube-only mode",
+                            peertube_success=False,
+                            peertube_error="Already uploaded"
+                        ))
+                        continue
+
+            else:
+                # No hash available (shouldn't happen in normal flow)
+                print(f"  ⚠️  No hash available, uploading anyway")
+                result = self.upload_video(
+                    video_path=video_path,
+                    metadata=metadata,
+                    upload_to_youtube=upload_to_youtube and not peertube_only_mode,
+                    upload_to_peertube=upload_to_peertube,
+                    replace_existing=False
+                )
 
             results.append(result)
 
-            # Update course.yml if upload was successful and updater is configured
-            if self.course_yml_updater and (result.youtube_success or result.peertube_success):
-                print(f"  Updating course.yml...")
-                self.course_yml_updater.update_video_ids(metadata)
+            # Update metadata.json after each successful upload
+            if result.youtube_success or result.peertube_success:
+                metadata_manager.update_metadata(metadata)
+                metadata_manager.save(list(metadata_manager.metadata_dict.values()))
+
+                # Update course.yml if updater is configured
+                if self.course_yml_updater:
+                    print(f"  Updating course.yml...")
+                    self.course_yml_updater.update_video_ids(metadata)
 
         return results
 
