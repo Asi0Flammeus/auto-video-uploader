@@ -142,14 +142,16 @@ class MetadataManager:
         
         return existing.youtube_id is not None or existing.peertube_id is not None
 
-    def find_by_course_part_chapter(self, course_index: str, part_index: int, chapter_index: int) -> Optional[VideoMetadata]:
+    def find_by_course_part_chapter_language(self, course_index: str, part_index: int,
+                                               chapter_index: int, code_language: str) -> Optional[VideoMetadata]:
         """
-        Find metadata by course, part, and chapter combination
+        Find metadata by course, part, chapter, and language combination
 
         Args:
             course_index: Course index (e.g., 'btc101')
             part_index: Part number
             chapter_index: Chapter number
+            code_language: Language code (e.g., 'EN', 'FR')
 
         Returns:
             VideoMetadata if found, None otherwise
@@ -157,7 +159,8 @@ class MetadataManager:
         for metadata in self.metadata_dict.values():
             if (metadata.course_index == course_index and
                 metadata.part_index == part_index and
-                metadata.chapter_index == chapter_index):
+                metadata.chapter_index == chapter_index and
+                metadata.code_language == code_language):
                 return metadata
         return None
 

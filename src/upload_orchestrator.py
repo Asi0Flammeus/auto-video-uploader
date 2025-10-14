@@ -212,15 +212,16 @@ class UploadOrchestrator:
                 ))
                 continue
 
-            # Priority 1: Check for content replacement (same course+part+chapter but different hash)
-            existing_entry = metadata_manager.find_by_course_part_chapter(
+            # Priority 1: Check for content replacement (same course+part+chapter+language but different hash)
+            existing_entry = metadata_manager.find_by_course_part_chapter_language(
                 metadata.course_index,
                 metadata.part_index,
-                metadata.chapter_index
+                metadata.chapter_index,
+                metadata.code_language
             )
 
             if existing_entry and existing_entry.sha256_hash != metadata.sha256_hash:
-                # Found existing video with same course+part+chapter but different content
+                # Found existing video with same course+part+chapter+language but different content
                 print(f"  🔄 Replacing existing video (content changed)")
                 print(f"    Old: {existing_entry.filename} (hash: {existing_entry.sha256_hash[:16]}...)")
                 print(f"    New: {metadata.filename} (hash: {metadata.sha256_hash[:16]}...)")
