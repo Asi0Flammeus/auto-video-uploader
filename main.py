@@ -178,8 +178,40 @@ def main(bec_repo: str, input_dir: str):
     metadata_list = extractor.process_videos_in_folder(selected_path)
 
     if metadata_list:
-        console.print(f"\n[green]✅ Successfully processed {len(metadata_list)} videos[/green]\n")
-        display_metadata_table(metadata_list)
+        console.print(f"\n[green]✅ Successfully processed {len(metadata_list)} videos[/green]")
+
+        # Check for videos without video_id (needed for course.yml update)
+        videos_without_id = [m for m in metadata_list if not m.video_id]
+
+        if videos_without_id:
+            console.print(f"\n[red]⚠️  WARNING: {len(videos_without_id)} videos do not have a video ID![/red]")
+            console.print("[yellow]    (No :::video id=UUID::: tag found in their markdown chapter)[/yellow]\n")
+
+            console.print("[bold]Videos missing video ID:[/bold]")
+            for metadata in videos_without_id:
+                console.print(f"  • {metadata.filename}")
+
+            console.print(f"\n[bold]Impact:[/bold]")
+            console.print("  • Videos will still upload to YouTube/PeerTube ✅")
+            console.print("  • [red]course.yml will NOT be updated ❌[/red]")
+            console.print("  • The BEC repository won't link to these videos")
+            console.print("\n[dim]To fix: Add :::video id=UUID::: tags to the corresponding chapters in the BEC repo[/dim]")
+
+            # Ask user if they want to continue
+            console.print("")
+            continue_choice = Prompt.ask(
+                "Do you want to continue with the upload anyway?",
+                choices=["yes", "no"],
+                default="no"
+            )
+
+            if continue_choice == "no":
+                console.print("[yellow]Upload cancelled. Please add video IDs to the BEC repository first.[/yellow]")
+                sys.exit(0)
+            else:
+                console.print("[yellow]Continuing with upload. Note: course.yml will not be updated for these videos.[/yellow]")
+        else:
+            console.print("[green]✅ All videos have video IDs - course.yml will be updated correctly[/green]")
 
         console.print(f"\n[blue]📤 Processing {len(metadata_list)} videos for upload:[/blue]")
 

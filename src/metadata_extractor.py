@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+from rich.console import Console
 
 
 @dataclass
@@ -284,21 +286,59 @@ More info:
         Process all video files in a given folder
         """
         metadata_list = []
+        errors = []
+        console = Console()
 
-        # Find all .mp4 files in the folder
-        video_files = list(folder_path.glob("*.mp4"))
+        # Find all .mp4 files in the folder and sort alphabetically
+        video_files = sorted(folder_path.glob("*.mp4"), key=lambda x: x.name)
 
         if not video_files:
-            print(f"No video files found in {folder_path}")
+            console.print(f"[yellow]No video files found in {folder_path}[/yellow]")
             return metadata_list
 
-        for video_file in video_files:
-            try:
-                print(f"⏳ Processing: {video_file.name} (calculating hash...)")
-                metadata = self.extract_metadata(video_file.name, video_file)
-                metadata_list.append(metadata)
-                print(f"✓ Processed: {video_file.name} (hash: {metadata.sha256_hash[:16]}...)")
-            except Exception as e:
-                print(f"✗ Error processing {video_file.name}: {e}")
+        console.print(f"\n[bold cyan]Processing {len(video_files)} videos...[/bold cyan]")
+
+        # Process videos with progress bar
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("({task.completed}/{task.total})"),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False
+        ) as progress:
+            task = progress.add_task("[cyan]Calculating hashes and extracting metadata...", total=len(video_files))
+
+            for video_file in video_files:
+                try:
+                    # Update progress description with current file
+                    progress.update(task, description=f"[cyan]Processing: {video_file.name[:50]}...")
+
+                    metadata = self.extract_metadata(video_file.name, video_file)
+                    metadata_list.append(metadata)
+
+                    # Advance the progress bar
+                    progress.advance(task)
+
+                except Exception as e:
+                    # Collect errors instead of printing immediately
+                    errors.append((video_file.name, str(e)))
+                    # Still advance progress even on error
+                    progress.advance(task)
+
+        # Report results
+        success_count = len(metadata_list)
+        error_count = len(errors)
+
+        console.print(f"\n[green]✓ Successfully processed: {success_count} videos[/green]")
+
+        # Display errors at the end if any
+        if errors:
+            console.print(f"[red]✗ Failed to process: {error_count} videos[/red]\n")
+            console.print("[bold red]Errors:[/bold red]")
+            for filename, error in errors:
+                console.print(f"  • {filename}: {error}")
 
         return metadata_list
