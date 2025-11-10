@@ -37,3 +37,4 @@ google-auth.json
 youtube_credentials.pickle
 .serena
 metadata.json.bak
+processed_thumbnails.json

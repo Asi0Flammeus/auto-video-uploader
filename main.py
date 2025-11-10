@@ -152,11 +152,15 @@ def main(bec_repo: str, input_dir: str):
 
     # Ask user to select a subfolder
     console.print("")
-    choice = Prompt.ask(
-        "Select a subfolder to process",
-        choices=[str(i) for i in range(1, len(subfolders) + 1)],
-        default="1"
-    )
+    try:
+        choice = Prompt.ask(
+            "Select a subfolder to process",
+            choices=[str(i) for i in range(1, len(subfolders) + 1)],
+            default="1"
+        )
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Operation cancelled[/yellow]")
+        sys.exit(0)
 
     selected_folder = subfolders[int(choice) - 1]
     selected_path = input_path / selected_folder
@@ -199,11 +203,15 @@ def main(bec_repo: str, input_dir: str):
 
             # Ask user if they want to continue
             console.print("")
-            continue_choice = Prompt.ask(
-                "Do you want to continue with the upload anyway?",
-                choices=["yes", "no"],
-                default="no"
-            )
+            try:
+                continue_choice = Prompt.ask(
+                    "Do you want to continue with the upload anyway?",
+                    choices=["yes", "no"],
+                    default="no"
+                )
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Operation cancelled[/yellow]")
+                sys.exit(0)
 
             if continue_choice == "no":
                 console.print("[yellow]Upload cancelled. Please add video IDs to the BEC repository first.[/yellow]")
@@ -244,11 +252,15 @@ def main(bec_repo: str, input_dir: str):
             console.print("  2. Consider only PeerTube for uploads")
             console.print("")
 
-            strategy_choice = Prompt.ask(
-                "Select strategy",
-                choices=["1", "2"],
-                default="1"
-            )
+            try:
+                strategy_choice = Prompt.ask(
+                    "Select strategy",
+                    choices=["1", "2"],
+                    default="1"
+                )
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Operation cancelled[/yellow]")
+                sys.exit(0)
 
             if strategy_choice == "2":
                 provider_strategy = "peertube_only"
@@ -287,11 +299,15 @@ def main(bec_repo: str, input_dir: str):
                 choice_num += 1
 
             console.print("")
-            platform_choice = Prompt.ask(
-                "Select platform",
-                choices=platform_choices,
-                default="1"
-            )
+            try:
+                platform_choice = Prompt.ask(
+                    "Select platform",
+                    choices=platform_choices,
+                    default="1"
+                )
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Operation cancelled[/yellow]")
+                sys.exit(0)
 
             selected_platform = choice_map[platform_choice]
 

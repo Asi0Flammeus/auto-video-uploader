@@ -3,9 +3,13 @@ import urllib3
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+import logging
+from .thumbnail_generator import ThumbnailGenerator
 
 # Disable SSL warnings when SSL verification is disabled
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -271,11 +275,188 @@ class PeerTubeUploader:
             print(f"  ❌ PeerTube: Failed to delete video {video_id}: {str(e)}")
             return False
 
+    def upload_thumbnail(self, video_uuid: str, thumbnail_path: Path) -> bool:
+        """
+        Upload a thumbnail image for a video using the PUT /api/v1/videos/{id} endpoint.
+        
+        This uses the main video update endpoint as per PeerTube API documentation.
+        The thumbnail is sent as 'thumbnailfile' in multipart/form-data.
+        
+        Args:
+            video_uuid: Video UUID or shortUUID
+            thumbnail_path: Path to thumbnail image file
+            
+        Returns:
+            True if upload successful, False otherwise
+        """
+        if not self.access_token:
+            logger.error("Not authenticated. Call authenticate() first.")
+            return False
+        
+        if not thumbnail_path.exists():
+            logger.error(f"Thumbnail file not found: {thumbnail_path}")
+            return False
+        
+        # Check file size (PeerTube limit is 4MB for thumbnails)
+        file_size = thumbnail_path.stat().st_size
+        if file_size > 4 * 1024 * 1024:
+            logger.error(f"Thumbnail file too large: {file_size} bytes (max 4MB)")
+            return False
+        
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+            
+            # Open and prepare the thumbnail file
+            with open(thumbnail_path, 'rb') as f:
+                # Use multipart/form-data with thumbnailfile field
+                # According to PeerTube OpenAPI spec:
+                # - Field name: thumbnailfile
+                # - Type: string, format: binary
+                # - Content type: image/jpeg
+                files = {
+                    'thumbnailfile': (
+                        'thumbnail.jpg',  # filename
+                        f,                # file object
+                        'image/jpeg'      # MIME type
+                    )
+                }
+                
+                logger.debug(f"Uploading thumbnail: size={file_size} bytes, video_uuid={video_uuid}")
+                
+                # Use PUT /api/v1/videos/{id} endpoint
+                # This is the correct endpoint for updating video metadata including thumbnail
+                url = f"{self.instance_url}/api/v1/videos/{video_uuid}"
+                
+                logger.debug(f"Using PUT endpoint: {url}")
+                
+                response = requests.put(
+                    url,
+                    headers=headers,
+                    files=files,
+                    verify=self.verify_ssl
+                )
+            
+            # Check response
+            if response.status_code in [200, 201, 204]:
+                logger.info(f"  ✅ PeerTube: Thumbnail uploaded successfully")
+                return True
+            elif response.status_code == 404:
+                logger.error(f"  ❌ PeerTube: Video not found (404): {video_uuid}")
+                # Try with upload endpoint if configured and different
+                if self.upload_endpoint != self.instance_url:
+                    logger.debug("Trying with upload endpoint...")
+                    with open(thumbnail_path, 'rb') as f:
+                        files = {
+                            'thumbnailfile': ('thumbnail.jpg', f, 'image/jpeg')
+                        }
+                        response = requests.put(
+                            f"{self.upload_endpoint}/api/v1/videos/{video_uuid}",
+                            headers=headers,
+                            files=files,
+                            verify=self.verify_ssl
+                        )
+                        if response.status_code in [200, 201, 204]:
+                            logger.info(f"  ✅ PeerTube: Thumbnail uploaded successfully via upload endpoint")
+                            return True
+                return False
+            elif response.status_code == 403:
+                logger.error(f"  ❌ PeerTube: Permission denied (403) - you don't have rights to update this video")
+                return False
+            elif response.status_code == 413:
+                logger.error(f"  ❌ PeerTube: File too large (413) - {file_size} bytes")
+                return False
+            elif response.status_code == 415:
+                logger.error(f"  ❌ PeerTube: Unsupported media type (415)")
+                logger.error(f"     Ensure the file is a valid JPEG/PNG image")
+                return False
+            elif response.status_code == 400:
+                # Parse error message
+                error_msg = "Bad request"
+                try:
+                    error_data = response.json()
+                    if isinstance(error_data, dict):
+                        if 'error' in error_data:
+                            error_msg = error_data['error']
+                        elif 'message' in error_data:
+                            error_msg = error_data['message']
+                        elif 'errors' in error_data:
+                            # Handle validation errors
+                            errors = error_data['errors']
+                            if isinstance(errors, dict) and 'thumbnailfile' in errors:
+                                thumb_errors = errors['thumbnailfile']
+                                if isinstance(thumb_errors, list) and thumb_errors:
+                                    error_msg = f"thumbnailfile: {thumb_errors[0].get('msg', thumb_errors[0])}"
+                            elif isinstance(errors, list) and errors:
+                                error_msg = errors[0].get('msg', str(errors[0]))
+                except:
+                    error_msg = response.text[:500] if response.text else "No error details"
+                
+                logger.error(f"  ❌ PeerTube: Bad request (400) - {error_msg}")
+                
+                # Additional debugging info
+                if "not supported" in error_msg.lower() or "too large" in error_msg.lower():
+                    logger.error(f"     File info: size={file_size} bytes, path={thumbnail_path}")
+                    logger.error(f"     Ensure file is <4MB and is a valid image format")
+                
+                return False
+            else:
+                logger.error(f"  ❌ PeerTube: Unexpected response ({response.status_code})")
+                if response.text:
+                    logger.error(f"     Response: {response.text[:200]}")
+                return False
+                
+        except requests.exceptions.SSLError:
+            logger.error(f"  ❌ PeerTube: SSL error - try setting PEERTUBE_VERIFY_SSL=false in .env")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"  ❌ PeerTube: Connection error - {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"  ❌ PeerTube: Exception during upload: {str(e)}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return False
+    
+    def set_video_thumbnail_at_timestamp(self, video_path: Path, video_uuid: str, 
+                                        timestamp: int = 4) -> bool:
+        """
+        Extract a frame from video and set it as thumbnail.
+        
+        Args:
+            video_path: Path to local video file
+            video_uuid: Video UUID or shortUUID
+            timestamp: Time in seconds to extract frame (default: 4)
+            
+        Returns:
+            True if thumbnail was set successfully, False otherwise
+        """
+        try:
+            with ThumbnailGenerator(thumbnail_time=timestamp) as generator:
+                # Extract thumbnail frame
+                thumbnail_path = generator.extract_frame(video_path, timestamp=timestamp)
+                
+                if not thumbnail_path:
+                    logger.warning(f"Failed to extract thumbnail from {video_path}")
+                    return False
+                
+                # Upload thumbnail
+                success = self.upload_thumbnail(video_uuid, thumbnail_path)
+                
+                # Cleanup is handled by context manager
+                return success
+                
+        except Exception as e:
+            logger.error(f"Failed to set video thumbnail: {str(e)}")
+            return False
+
     def upload_video(self, video_path: Path, title: str, description: str,
                      channel_id: Optional[int] = None,
                      privacy: int = 2,  # 1=Public, 2=Unlisted, 3=Private
                      category: int = 15,  # 15=Science & Technology
-                     language: str = "en") -> PeerTubeUploadResult:
+                     language: str = "en",
+                     auto_thumbnail: bool = True) -> PeerTubeUploadResult:
         """
         Upload video to PeerTube
 
@@ -287,6 +468,7 @@ class PeerTubeUploader:
             privacy: Privacy setting (2 = unlisted)
             category: Category ID (15 = Science & Technology)
             language: Video language code
+            auto_thumbnail: Automatically set thumbnail at 4 seconds (default: True)
 
         Returns:
             PeerTubeUploadResult with upload status and video info
@@ -341,10 +523,30 @@ class PeerTubeUploader:
                 'waitTranscoding': 'true'
             }
 
+            # Extract thumbnail before upload if auto_thumbnail is enabled
+            thumbnail_path = None
+            if auto_thumbnail:
+                print(f"  PeerTube: Extracting thumbnail at 4s...")
+                try:
+                    with ThumbnailGenerator(thumbnail_time=4) as generator:
+                        thumbnail_path = generator.extract_frame(video_path, timestamp=4)
+                        if thumbnail_path:
+                            print(f"  PeerTube: Thumbnail extracted successfully")
+                        else:
+                            print(f"  PeerTube: Warning - thumbnail extraction failed, uploading without thumbnail")
+                except Exception as e:
+                    logger.warning(f"Failed to extract thumbnail: {e}")
+                    thumbnail_path = None
+
             # Prepare file upload
             files = {
                 'videofile': (video_path.name, open(video_path, 'rb'), 'video/mp4')
             }
+            
+            # Add thumbnail to upload if available
+            if thumbnail_path and thumbnail_path.exists():
+                files['thumbnailfile'] = ('thumbnail.jpg', open(thumbnail_path, 'rb'), 'image/jpeg')
+                print(f"  PeerTube: Including thumbnail in upload")
 
             # Upload video
             headers = {
@@ -361,8 +563,17 @@ class PeerTubeUploader:
                 verify=self.verify_ssl
             )
 
-            # Close the file
+            # Close the files
             files['videofile'][1].close()
+            if 'thumbnailfile' in files:
+                files['thumbnailfile'][1].close()
+            
+            # Clean up thumbnail temp file if it was created
+            if thumbnail_path and thumbnail_path.exists():
+                try:
+                    thumbnail_path.unlink()
+                except Exception as e:
+                    logger.debug(f"Failed to cleanup temp thumbnail: {e}")
 
             if response.status_code not in [200, 201]:
                 return PeerTubeUploadResult(
@@ -377,6 +588,10 @@ class PeerTubeUploader:
             video_url = f"{self.instance_url}/w/{video_short_uuid}"
 
             print(f"  PeerTube upload: Complete")
+            
+            # Thumbnail was already included in upload if auto_thumbnail was enabled
+            if auto_thumbnail and thumbnail_path:
+                print(f"  ✅ PeerTube: Video uploaded with thumbnail at 4s")
 
             return PeerTubeUploadResult(
                 success=True,
@@ -385,6 +600,13 @@ class PeerTubeUploader:
             )
 
         except Exception as e:
+            # Clean up thumbnail temp file on error
+            if thumbnail_path and thumbnail_path.exists():
+                try:
+                    thumbnail_path.unlink()
+                except:
+                    pass
+            
             return PeerTubeUploadResult(
                 success=False,
                 error=f"Upload failed: {str(e)}"

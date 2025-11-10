@@ -140,7 +140,8 @@ class UploadOrchestrator:
                 video_path=video_path,
                 title=metadata.title,
                 description=full_description,
-                privacy=2  # Unlisted
+                privacy=2,  # Unlisted
+                auto_thumbnail=True  # Set thumbnail at 4 seconds
             )
 
             result.peertube_success = pt_result.success

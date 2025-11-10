@@ -127,6 +127,7 @@ class MetadataExtractor:
         current_part = 0
         current_chapter = 0
         in_frontmatter = False
+        frontmatter_ended = False  # Track if we've finished processing frontmatter
 
         # Helper function to check if partId/chapterId exists within next few lines
         def has_tag_nearby(lines_list, start_idx, tag_name, max_distance=5):
@@ -137,9 +138,12 @@ class MetadataExtractor:
             return False
 
         for i, line in enumerate(lines):
-            # Skip frontmatter
-            if line.strip() == '---':
+            # Skip frontmatter (only at the beginning of the file)
+            if line.strip() == '---' and not frontmatter_ended:
                 in_frontmatter = not in_frontmatter
+                # If we're exiting frontmatter, mark it as ended
+                if not in_frontmatter:
+                    frontmatter_ended = True
                 continue
             if in_frontmatter:
                 continue
